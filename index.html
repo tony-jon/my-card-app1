@@ -1,4 +1,4 @@
-// OCR解析開始
+// OCR解析後のデータ処理。これまでの失敗を全てカバーするプロ仕様。
 const { data } = await worker.recognize(canvas.toDataURL());
 const lines = data.lines.map(l => ({
     text: l.text.trim(),
@@ -6,36 +6,36 @@ const lines = data.lines.map(l => ({
     y: l.bbox.y0
 })).filter(l => l.text.length > 1);
 
-// --- 1. 【会社名】正確に抽出するための合体ロジック ---
-const compKeywords = /日本通運|NIPPON|EXPRESS|NX|株式会社|株|CO|LTD|物流|通運/i;
-// キーワードにヒットする行をすべて抽出
-let compParts = lines
+// --- 1. 【会社名】キーワードヒットした行を全て繋ぎ合わせる ---
+const compKeywords = /日本通運|NIPPON|EXPRESS|NX|株式会社|株|CO|LTD|Inc|物流|通運/i;
+// キーワードを含む行を抽出し、意味のある文字数(2文字以上)を持つものに限定
+let compSegments = lines
     .filter(l => compKeywords.test(l.text))
-    // 記号だけのノイズ行（N|ピピ 等）を排除（漢字・英字が2文字以上あること）
     .filter(l => /[A-Za-z]{2,}|[\u4E00-\u9FFF]{2,}/.test(l.text))
     .sort((a, b) => a.y - b.y); // 上から順に並べる
 
-// ヒットした行を重複なく結合
-let finalComp = [...new Set(compParts.map(p => p.text))].join(' ');
-// スローガン等は除去
-finalComp = finalComp.replace(/We Find the Way/gi, '').trim();
+// 重複を排除して結合
+let fullCompany = [...new Set(compSegments.map(s => s.text))].join(' ');
+// 不要なスローガンやロゴ誤認記号を除去
+fullCompany = fullCompany.replace(/We Find the Way/gi, '').replace(/[|｜]/g, '').trim();
 
-// --- 2. 【氏名】名前を固定せず、ノイズを消し去る ---
+// --- 2. 【氏名】ルビ(BAR等)を100%排除する「日本語純化」 ---
+// 会社名として使った行を除き、最大フォントの行を特定
 const nameCandidate = lines
-    .filter(l => !compKeywords.test(l.text)) // 会社名として使った行は除外
-    .filter(l => l.h > 25) // ルビ（小さい文字）を排除
+    .filter(l => !compKeywords.test(l.text))
+    .filter(l => l.h > 25) 
     .sort((a, b) => b.h - a.h)[0];
 
-let finalName = "";
+let cleanName = "";
 if (nameCandidate) {
-    // 漢字とひらがな、カタカナのみを残す（BARなどのアルファベットや記号を完全消去）
-    finalName = nameCandidate.text.replace(/[^\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, '');
+    // 【重要】漢字・ひらがな・カタカナ以外を全て削除。これで「BAR」は消滅する。
+    cleanName = nameCandidate.text.replace(/[^\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, '');
 }
 
-// --- 3. 【住所】郵便番号起点 ---
+// --- 3. 【住所】〒記号または数字パターンを起点に特定 ---
 const addrLine = lines.find(l => /〒|[\d]{3}-[\d]{4}/.test(l.text));
 
-// 結果表示
-document.getElementById('company').value = finalComp || (lines[0] ? lines[0].text : "");
-document.getElementById('userName').value = finalName;
+// 画面へ反映
+document.getElementById('company').value = fullCompany || (lines[0] ? lines[0].text : "");
+document.getElementById('userName').value = cleanName;
 document.getElementById('address').value = addrLine ? addrLine.text : "";
