@@ -8,12 +8,13 @@
     <style>
         body { font-family: sans-serif; padding: 15px; background: #f4f4f4; margin: 0; }
         .container { max-width: 500px; margin: auto; }
-        input, button { width: 100%; padding: 12px; margin: 5px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
-        button { background: #007bff; color: white; border: none; font-weight: bold; }
+        input, button, textarea { width: 100%; padding: 12px; margin: 5px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
+        button { background: #007bff; color: white; border: none; font-weight: bold; cursor: pointer; }
         .search-box { background: #fffde7; border: 2px solid #fbc02d; position: sticky; top: 0; z-index: 100; }
         .card { background: white; padding: 15px; margin-top: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .card img { max-width: 100%; border-radius: 4px; margin-top: 10px; }
-        .status { color: #d32f2f; font-weight: bold; font-size: 14px; }
+        .status { color: #d32f2f; font-weight: bold; font-size: 14px; margin-bottom: 5px; }
+        .ocr-result-area { background: #e9ecef; font-size: 12px; height: 80px; resize: vertical; }
         .delete-btn { background: #ff4444; margin-top: 10px; padding: 8px; font-size: 14px; }
     </style>
 </head>
@@ -23,8 +24,11 @@
         <div id="ocrStatus" class="status"></div>
         <input type="file" id="photo" accept="image/*" onchange="recognizeText()">
         
-        <input type="text" id="name" placeholder="名前 (自動入力されます)">
-        <input type="text" id="company" placeholder="会社名 (自動入力されます)">
+        <label style="font-size: 12px; color: #666;">読み取り原文:</label>
+        <textarea id="rawText" class="ocr-result-area" placeholder="ここに読み取ったテキストが表示されます"></textarea>
+
+        <input type="text" id="name" placeholder="名前">
+        <input type="text" id="company" placeholder="会社名">
         <input type="text" id="phone" placeholder="電話番号">
         <button onclick="saveCard()">保存する</button>
 
@@ -36,31 +40,43 @@
     </div>
 
     <script>
-        // 文字読み取り(OCR)の処理
         async function recognizeText() {
             const file = document.getElementById('photo').files[0];
             if (!file) return;
 
             const status = document.getElementById('ocrStatus');
-            status.innerText = "文字を読み取り中...30秒ほどかかる場合があります。";
+            const rawTextArea = document.getElementById('rawText');
+            status.innerText = "文字を読み取り中...（数十秒かかる場合があります）";
 
             try {
                 const result = await Tesseract.recognize(file, 'jpn+eng');
                 const text = result.data.text;
                 
-                // 読み取った文字から名前などを推測（簡易的）
-                const lines = text.split('\n').filter(l => l.trim().length > 0);
+                // 原文を表示
+                rawTextArea.value = text;
+
+                // データの抽出処理
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                
                 if (lines.length > 0) {
-                    document.getElementById('name').value = lines[0] || ""; // 1行目を名前と仮定
-                    document.getElementById('company').value = lines[1] || ""; // 2行目を会社と仮定
+                    // 1行目を名前、2行目を会社名と仮定（微調整可能）
+                    document.getElementById('name').value = lines[0] || "";
+                    document.getElementById('company').value = lines[1] || "";
+                    
+                    // 電話番号を正規表現で探す (数字とハイフンの組み合わせ)
+                    const phoneMatch = text.match(/[\d-]{10,15}/);
+                    if (phoneMatch) {
+                        document.getElementById('phone').value = phoneMatch[0];
+                    }
                 }
-                status.innerText = "読み取り完了！修正が必要な場合は直してください。";
+                
+                status.innerText = "読み取り完了！";
             } catch (e) {
-                status.innerText = "読み取りに失敗しました。直接入力してください。";
+                console.error(e);
+                status.innerText = "エラーが発生しました。直接入力してください。";
             }
         }
 
-        // 保存処理
         function saveCard() {
             const name = document.getElementById('name').value;
             if (!name) { alert("名前を入力してください"); return; }
@@ -72,13 +88,13 @@
                     const img = new Image();
                     img.onload = function() {
                         const canvas = document.createElement('canvas');
-                        const width = 300;
+                        const width = 400; // 少し解像度を上げました
                         const scale = width / img.width;
                         canvas.width = width;
                         canvas.height = img.height * scale;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        finalize(canvas.toDataURL('image/jpeg', 0.6));
+                        finalize(canvas.toDataURL('image/jpeg', 0.7));
                     };
                     img.src = e.target.result;
                 };
@@ -99,30 +115,43 @@
             cards.push(newCard);
             localStorage.setItem('myAiCards', JSON.stringify(cards));
             alert("保存しました！");
-            location.reload();
+            
+            // 入力欄をリセット
+            document.getElementById('name').value = "";
+            document.getElementById('company').value = "";
+            document.getElementById('phone').value = "";
+            document.getElementById('rawText').value = "";
+            document.getElementById('photo').value = "";
+            
+            displayCards();
         }
 
-        // 表示と検索の処理
         function displayCards() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
             const cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
             const list = document.getElementById('list');
             list.innerHTML = "";
 
-            cards.reverse().forEach((c, i) => {
+            // 新しい順に表示
+            [...cards].reverse().forEach((c, i) => {
+                const originalIndex = cards.length - 1 - i;
                 if (c.name.toLowerCase().includes(searchTerm) || c.company.toLowerCase().includes(searchTerm)) {
                     const div = document.createElement('div');
                     div.className = 'card';
-                    div.innerHTML = `<h3>${c.name}</h3><p>${c.company}</p><p>${c.phone}</p>`;
+                    div.innerHTML = `
+                        <h3>${c.name}</h3>
+                        <p>🏢 ${c.company}</p>
+                        <p>📞 ${c.phone}</p>
+                    `;
                     if (c.img) div.innerHTML += `<img src="${c.img}">`;
-                    div.innerHTML += `<button class="delete-btn" onclick="deleteCard(${cards.length-1-i})">削除</button>`;
+                    div.innerHTML += `<button class="delete-btn" onclick="deleteCard(${originalIndex})">削除</button>`;
                     list.appendChild(div);
                 }
             });
         }
 
         function deleteCard(index) {
-            if(confirm("削除しますか？")) {
+            if(confirm("この名刺を削除しますか？")) {
                 let cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
                 cards.splice(index, 1);
                 localStorage.setItem('myAiCards', JSON.stringify(cards));
