@@ -5,23 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>名刺管理</title>
 <style>
-  body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
-  input, textarea, button { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; font-size: 16px; }
-  button { background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
-  .card { background: white; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-  .card img { max-width: 100%; height: auto; display: block; margin-bottom: 10px; }
-  h2 { font-size: 1.2em; margin-top: 0; }
+  body { font-family: sans-serif; padding: 20px; background: #f0f0f0; margin: 0; }
+  h1 { font-size: 1.5em; color: #333; }
+  input, textarea, button { width: 100%; padding: 12px; margin-bottom: 10px; box-sizing: border-box; font-size: 16px; border: 1px solid #ccc; border-radius: 5px; }
+  button { background: #007bff; color: white; border: none; font-weight: bold; cursor: pointer; }
+  button:active { background: #0056b3; }
+  .card { background: white; padding: 15px; margin-top: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); word-break: break-all; }
+  .card img { max-width: 100%; height: auto; border-radius: 4px; margin-bottom: 10px; }
+  .card h2 { font-size: 1.2em; margin: 0 0 10px 0; color: #007bff; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+  .card p { margin: 5px 0; font-size: 0.9em; color: #555; }
 </style>
 </head>
 <body>
 
 <h1>名刺登録</h1>
-<input type="text" id="name" placeholder="名前">
+<input type="text" id="name" placeholder="名前 (必須)">
 <input type="text" id="company" placeholder="会社名">
 <input type="text" id="title" placeholder="役職">
 <input type="text" id="address" placeholder="住所">
 <input type="tel" id="phone" placeholder="連絡先">
-<p>名刺の写真:</p>
+<p style="margin-bottom:5px;">名刺の写真:</p>
 <input type="file" id="photo" accept="image/*">
 <button onclick="saveCard()">保存する</button>
 
@@ -31,47 +34,49 @@
 <div id="cardList"></div>
 
 <script>
-  // ページを開いた時に保存されたデータを表示
   document.addEventListener('DOMContentLoaded', loadCards);
 
   function saveCard() {
     const name = document.getElementById('name').value;
-    const company = document.getElementById('company').value;
-    const title = document.getElementById('title').value;
-    const address = document.getElementById('address').value;
-    const phone = document.getElementById('phone').value;
-    const photoInput = document.getElementById('photo');
+    if (!name) { alert("名前を入力してください"); return; }
 
-    if (!name) { alert("名前は必須です"); return; }
-
-    const reader = new FileReader();
-    
-    // 写真の処理（あってもなくてもOKにする）
-    const processData = (photoData) => {
-      const card = { name, company, title, address, phone, photo: photoData };
-      
-      // 既存のデータを取得して追加
-      let cards = JSON.parse(localStorage.getItem('meishiData')) || [];
-      cards.push(card);
-      localStorage.setItem('meishiData', JSON.stringify(cards));
-
-      alert("保存しました！");
-      location.reload(); // 画面更新
+    const card = {
+      name: name,
+      company: document.getElementById('company').value,
+      title: document.getElementById('title').value,
+      address: document.getElementById('address').value,
+      phone: document.getElementById('phone').value,
+      photo: null
     };
 
+    const photoInput = document.getElementById('photo');
     if (photoInput.files && photoInput.files[0]) {
-      reader.onload = function(e) { processData(e.target.result); };
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        card.photo = e.target.result;
+        finalizeSave(card);
+      };
       reader.readAsDataURL(photoInput.files[0]);
     } else {
-      processData(null);
+      finalizeSave(card);
     }
+  }
+
+  function finalizeSave(card) {
+    let cards = JSON.parse(localStorage.getItem('meishiData')) || [];
+    cards.push(card);
+    localStorage.setItem('meishiData', JSON.stringify(cards));
+    alert("保存しました！");
+    location.reload();
   }
 
   function loadCards() {
     const list = document.getElementById('cardList');
     const cards = JSON.parse(localStorage.getItem('meishiData')) || [];
-
-    // 新しい順に表示
+    if (cards.length === 0) {
+      list.innerHTML = "<p>登録された名刺はありません。</p>";
+      return;
+    }
     cards.slice().reverse().forEach((card, index) => {
       const div = document.createElement('div');
       div.className = 'card';
@@ -81,16 +86,16 @@
       html += `<p><b>役職:</b> ${card.title}</p>`;
       html += `<p><b>住所:</b> ${card.address}</p>`;
       html += `<p><b>電話:</b> ${card.phone}</p>`;
-      html += `<button onclick="deleteCard(${cards.length - 1 - index})" style="background:#ff4444; margin-top:10px;">削除</button>`;
+      html += `<button onclick="deleteCard(${cards.length - 1 - index})" style="background:#dc3545; margin-top:10px; padding:8px;">削除</button>`;
       div.innerHTML = html;
       list.appendChild(div);
     });
   }
 
-  function deleteCard(originalIndex) {
-    if(confirm("本当に削除しますか？")) {
+  function deleteCard(idx) {
+    if(confirm("この名刺を削除しますか？")) {
       let cards = JSON.parse(localStorage.getItem('meishiData')) || [];
-      cards.splice(originalIndex, 1);
+      cards.splice(idx, 1);
       localStorage.setItem('meishiData', JSON.stringify(cards));
       location.reload();
     }
