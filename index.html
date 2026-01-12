@@ -3,30 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>名刺管理アプリ</title>
+    <title>AI名刺管理アプリ</title>
+    <script src="https://unpkg.com/tesseract.js@v4.0.1/dist/tesseract.min.js"></script>
     <style>
         body { font-family: sans-serif; padding: 15px; background: #f4f4f4; margin: 0; }
+        .container { max-width: 500px; margin: auto; }
         input, button { width: 100%; padding: 12px; margin: 5px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
         button { background: #007bff; color: white; border: none; font-weight: bold; }
+        .search-box { background: #fffde7; border: 2px solid #fbc02d; position: sticky; top: 0; z-index: 100; }
         .card { background: white; padding: 15px; margin-top: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .card img { max-width: 100%; height: auto; border-radius: 4px; margin-top: 10px; }
+        .card img { max-width: 100%; border-radius: 4px; margin-top: 10px; }
+        .status { color: #d32f2f; font-weight: bold; font-size: 14px; }
         .delete-btn { background: #ff4444; margin-top: 10px; padding: 8px; font-size: 14px; }
     </style>
 </head>
 <body>
-    <h2>名刺登録</h2>
-    <input type="text" id="name" placeholder="名前 (必須)">
-    <input type="text" id="company" placeholder="会社名">
-    <input type="text" id="phone" placeholder="電話番号">
-    <input type="file" id="photo" accept="image/*">
-    <button onclick="saveCard()">保存する</button>
+    <div class="container">
+        <h2>名刺登録 (AI読み取り付)</h2>
+        <div id="ocrStatus" class="status"></div>
+        <input type="file" id="photo" accept="image/*" onchange="recognizeText()">
+        
+        <input type="text" id="name" placeholder="名前 (自動入力されます)">
+        <input type="text" id="company" placeholder="会社名 (自動入力されます)">
+        <input type="text" id="phone" placeholder="電話番号">
+        <button onclick="saveCard()">保存する</button>
 
-    <div id="list"></div>
+        <hr>
+        <h2>名刺検索</h2>
+        <input type="text" id="searchInput" class="search-box" placeholder="名前や会社名で検索..." oninput="displayCards()">
+        
+        <div id="list"></div>
+    </div>
 
     <script>
+        // 文字読み取り(OCR)の処理
+        async function recognizeText() {
+            const file = document.getElementById('photo').files[0];
+            if (!file) return;
+
+            const status = document.getElementById('ocrStatus');
+            status.innerText = "文字を読み取り中...30秒ほどかかる場合があります。";
+
+            try {
+                const result = await Tesseract.recognize(file, 'jpn+eng');
+                const text = result.data.text;
+                
+                // 読み取った文字から名前などを推測（簡易的）
+                const lines = text.split('\n').filter(l => l.trim().length > 0);
+                if (lines.length > 0) {
+                    document.getElementById('name').value = lines[0] || ""; // 1行目を名前と仮定
+                    document.getElementById('company').value = lines[1] || ""; // 2行目を会社と仮定
+                }
+                status.innerText = "読み取り完了！修正が必要な場合は直してください。";
+            } catch (e) {
+                status.innerText = "読み取りに失敗しました。直接入力してください。";
+            }
+        }
+
+        // 保存処理
         function saveCard() {
             const name = document.getElementById('name').value;
-            if (!name) { alert("名前を入れてください"); return; }
+            if (!name) { alert("名前を入力してください"); return; }
 
             const file = document.getElementById('photo').files[0];
             if (file) {
@@ -34,63 +71,66 @@
                 reader.onload = function(e) {
                     const img = new Image();
                     img.onload = function() {
-                        // 写真を小さくリサイズ（重要！）
                         const canvas = document.createElement('canvas');
-                        const width = 300; // 横幅を300pxに縮小
+                        const width = 300;
                         const scale = width / img.width;
                         canvas.width = width;
                         canvas.height = img.height * scale;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        // 圧縮して保存
-                        addToList(name, canvas.toDataURL('image/jpeg', 0.6));
+                        finalize(canvas.toDataURL('image/jpeg', 0.6));
                     };
                     img.src = e.target.result;
                 };
                 reader.readAsDataURL(file);
             } else {
-                addToList(name, null);
+                finalize(null);
             }
         }
 
-        function addToList(name, imgData) {
-            const company = document.getElementById('company').value;
-            const phone = document.getElementById('phone').value;
-            const newCard = { name, company, phone, img: imgData };
-            
-            let cards = JSON.parse(localStorage.getItem('myCards')) || [];
+        function finalize(imgData) {
+            const newCard = {
+                name: document.getElementById('name').value,
+                company: document.getElementById('company').value,
+                phone: document.getElementById('phone').value,
+                img: imgData
+            };
+            let cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
             cards.push(newCard);
-            
-            try {
-                localStorage.setItem('myCards', JSON.stringify(cards));
-                alert("保存しました！");
-                location.reload();
-            } catch (e) {
-                alert("エラー：写真が大きすぎるか、容量がいっぱいです。");
-            }
+            localStorage.setItem('myAiCards', JSON.stringify(cards));
+            alert("保存しました！");
+            location.reload();
         }
 
-        window.onload = function() {
-            const cards = JSON.parse(localStorage.getItem('myCards')) || [];
+        // 表示と検索の処理
+        function displayCards() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
             const list = document.getElementById('list');
+            list.innerHTML = "";
+
             cards.reverse().forEach((c, i) => {
-                const div = document.createElement('div');
-                div.className = 'card';
-                div.innerHTML = `<h3>${c.name}</h3><p>${c.company}</p><p>${c.phone}</p>`;
-                if (c.img) div.innerHTML += `<img src="${c.img}">`;
-                div.innerHTML += `<button class="delete-btn" onclick="deleteCard(${cards.length-1-i})">削除</button>`;
-                list.appendChild(div);
+                if (c.name.toLowerCase().includes(searchTerm) || c.company.toLowerCase().includes(searchTerm)) {
+                    const div = document.createElement('div');
+                    div.className = 'card';
+                    div.innerHTML = `<h3>${c.name}</h3><p>${c.company}</p><p>${c.phone}</p>`;
+                    if (c.img) div.innerHTML += `<img src="${c.img}">`;
+                    div.innerHTML += `<button class="delete-btn" onclick="deleteCard(${cards.length-1-i})">削除</button>`;
+                    list.appendChild(div);
+                }
             });
-        };
+        }
 
         function deleteCard(index) {
-            if(confirm("消去しますか？")) {
-                let cards = JSON.parse(localStorage.getItem('myCards')) || [];
+            if(confirm("削除しますか？")) {
+                let cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
                 cards.splice(index, 1);
-                localStorage.setItem('myCards', JSON.stringify(cards));
-                location.reload();
+                localStorage.setItem('myAiCards', JSON.stringify(cards));
+                displayCards();
             }
         }
+
+        window.onload = displayCards;
     </script>
 </body>
 </html>
