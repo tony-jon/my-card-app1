@@ -1,72 +1,75 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Card App</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; background: #f4f4f4; }
-        input, button { width: 100%; padding: 10px; margin: 5px 0; box-sizing: border-box; }
-        button { background: #007bff; color: white; border: none; border-radius: 5px; }
-        .card { background: white; padding: 15px; margin-top: 10px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        img { max-width: 100%; height: auto; margin-top: 10px; }
-    </style>
-</head>
-<body>
-    <h2>名刺登録 / Register Card</h2>
-    <input type="text" id="name" placeholder="Name (Required)">
-    <input type="text" id="company" placeholder="Company">
-    <input type="text" id="title" placeholder="Title">
-    <input type="text" id="address" placeholder="Address">
-    <input type="text" id="phone" placeholder="Phone">
-    <input type="file" id="photo" accept="image/*">
-    <button onclick="saveData()">保存 / Save</button>
+<script>
+    function saveData() {
+        const name = document.getElementById('name').value;
+        if (!name) { alert("名前を入力してください"); return; }
 
-    <div id="list"></div>
-
-    <script>
-        function saveData() {
-            const name = document.getElementById('name').value;
-            if (!name) { alert("Please enter a name"); return; }
-
-            const file = document.getElementById('photo').files[0];
+        const file = document.getElementById('photo').files[0];
+        
+        if (file) {
             const reader = new FileReader();
-
-            const finalize = (imgData) => {
-                const card = {
-                    name,
-                    company: document.getElementById('company').value,
-                    title: document.getElementById('title').value,
-                    address: document.getElementById('address').value,
-                    phone: document.getElementById('phone').value,
-                    img: imgData
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    // 写真を小さくリサイズする処理
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 400; // 横幅を400ピクセルに制限
+                    const scaleSize = MAX_WIDTH / img.width;
+                    canvas.width = MAX_WIDTH;
+                    canvas.height = img.height * scaleSize;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    
+                    // 圧縮した画像データを作成
+                    const compressedData = canvas.toDataURL('image/jpeg', 0.7);
+                    finalize(compressedData);
                 };
-                let data = JSON.parse(localStorage.getItem('cards')) || [];
-                data.push(card);
-                localStorage.setItem('cards', JSON.stringify(data));
-                alert("Saved!");
-                location.reload();
+                img.src = e.target.result;
             };
-
-            if (file) {
-                reader.onload = (e) => finalize(e.target.result);
-                reader.readAsDataURL(file);
-            } else {
-                finalize(null);
-            }
+            reader.readAsDataURL(file);
+        } else {
+            finalize(null);
         }
 
-        window.onload = function() {
-            const data = JSON.parse(localStorage.getItem('cards')) || [];
-            const list = document.getElementById('list');
-            data.reverse().forEach(c => {
-                const div = document.createElement('div');
-                div.className = 'card';
-                div.innerHTML = `<h3>${c.name}</h3><p>${c.company}</p><p>${c.title}</p><p>${c.address}</p><p>${c.phone}</p>`;
-                if (c.img) div.innerHTML += `<img src="${c.img}">`;
-                list.appendChild(div);
-            });
-        };
-    </script>
-</body>
-</html>
+        function finalize(imgData) {
+            const card = {
+                name: name,
+                company: document.getElementById('company').value,
+                title: document.getElementById('title').value,
+                address: document.getElementById('address').value,
+                phone: document.getElementById('phone').value,
+                img: imgData
+            };
+            let data = JSON.parse(localStorage.getItem('cards')) || [];
+            data.push(card);
+            try {
+                localStorage.setItem('cards', JSON.stringify(data));
+                alert("写真付きで保存しました！");
+                location.reload();
+            } catch (e) {
+                alert("保存容量がいっぱいです。古い名刺を削除してください。");
+            }
+        }
+    }
+
+    window.onload = function() {
+        const data = JSON.parse(localStorage.getItem('cards')) || [];
+        const list = document.getElementById('list');
+        data.reverse().forEach((c, index) => {
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.innerHTML = `<h3>${c.name}</h3><p>${c.company}</p><p>${c.title}</p><p>${c.address}</p><p>${c.phone}</p>`;
+            if (c.img) div.innerHTML += `<img src="${c.img}">`;
+            div.innerHTML += `<button onclick="deleteCard(${data.length - 1 - index})" style="background:#ff4444; color:white; border:none; padding:5px; width:auto;">削除</button>`;
+            list.appendChild(div);
+        });
+    };
+
+    function deleteCard(idx) {
+        if(confirm("削除しますか？")) {
+            let data = JSON.parse(localStorage.getItem('cards')) || [];
+            data.splice(idx, 1);
+            localStorage.setItem('cards', JSON.stringify(data));
+            location.reload();
+        }
+    }
+</script>
