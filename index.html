@@ -1,4 +1,4 @@
-// OCR解析後のデータ処理（名前を固定せず、特徴で抽出）
+// OCR解析開始
 const { data } = await worker.recognize(canvas.toDataURL());
 const lines = data.lines.map(l => ({
     text: l.text.trim(),
@@ -6,28 +6,36 @@ const lines = data.lines.map(l => ({
     y: l.bbox.y0
 })).filter(l => l.text.length > 1);
 
-// 1. 【会社名の特定】キーワード（属性）ベース
-const compKeywords = /株式会社|株|CO|LTD|Inc|有限|通運|EXPRESS|NIPPON|LOGISTICS/i;
-const companyCandidates = lines.filter(l => compKeywords.test(l.text));
-// 複数あれば、より上部(yが小さい)にあるものを優先
-const companyLine = companyCandidates.sort((a, b) => a.y - b.y)[0] || lines[0];
+// --- 1. 【会社名】正確に抽出するための合体ロジック ---
+const compKeywords = /日本通運|NIPPON|EXPRESS|NX|株式会社|株|CO|LTD|物流|通運/i;
+// キーワードにヒットする行をすべて抽出
+let compParts = lines
+    .filter(l => compKeywords.test(l.text))
+    // 記号だけのノイズ行（N|ピピ 等）を排除（漢字・英字が2文字以上あること）
+    .filter(l => /[A-Za-z]{2,}|[\u4E00-\u9FFF]{2,}/.test(l.text))
+    .sort((a, b) => a.y - b.y); // 上から順に並べる
 
-// 2. 【氏名の特定】動的サイズ判定
+// ヒットした行を重複なく結合
+let finalComp = [...new Set(compParts.map(p => p.text))].join(' ');
+// スローガン等は除去
+finalComp = finalComp.replace(/We Find the Way/gi, '').trim();
+
+// --- 2. 【氏名】名前を固定せず、ノイズを消し去る ---
 const nameCandidate = lines
-    .filter(l => l.text !== companyLine.text) // 会社名を除外
-    .filter(l => l.h > 25) // ルビ（小さい文字）を除外
-    .sort((a, b) => b.h - a.h)[0]; // 残った中で最大サイズの行
+    .filter(l => !compKeywords.test(l.text)) // 会社名として使った行は除外
+    .filter(l => l.h > 25) // ルビ（小さい文字）を排除
+    .sort((a, b) => b.h - a.h)[0];
 
-// 3. 【ノイズ除去】特定の名前ではなく「記号」を消す
 let finalName = "";
 if (nameCandidate) {
-    // 括弧、カンマ、ドット、その他OCRが誤読しやすい記号を一括除去
-    finalName = nameCandidate.text.replace(/[|｜()\[\]{}.,:;!?"'_-]/g, '').trim();
-    
-    // 冒頭に1-2文字のアルファベット（ルビの誤認識）があれば除去
-    finalName = finalName.replace(/^[A-Z]{1,2}\s/, '');
+    // 漢字とひらがな、カタカナのみを残す（BARなどのアルファベットや記号を完全消去）
+    finalName = nameCandidate.text.replace(/[^\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, '');
 }
 
-// 結果の反映
-document.getElementById('company').value = companyLine ? companyLine.text : "";
+// --- 3. 【住所】郵便番号起点 ---
+const addrLine = lines.find(l => /〒|[\d]{3}-[\d]{4}/.test(l.text));
+
+// 結果表示
+document.getElementById('company').value = finalComp || (lines[0] ? lines[0].text : "");
 document.getElementById('userName').value = finalName;
+document.getElementById('address').value = addrLine ? addrLine.text : "";
