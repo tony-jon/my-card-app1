@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>極限精度：日英対応名刺解析</title>
+    <title>レイアウトフリー：AI名刺スキャナー</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         :root { --main: #1a73e8; }
@@ -12,30 +12,30 @@
         .status { padding: 10px; background: #e8f0fe; color: #1967d2; text-align: center; font-weight: bold; border-radius: 8px; margin-bottom: 15px; }
         .preview { width: 100%; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; }
         label { font-size: 11px; font-weight: bold; color: #5f6368; display: block; margin-bottom: 5px; }
-        input { width: 100%; padding: 12px; border: 1px solid #dadce0; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-bottom: 12px; }
+        input, textarea { width: 100%; padding: 12px; border: 1px solid #dadce0; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-bottom: 12px; }
         button { width: 100%; padding: 16px; background: var(--main); color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <div id="status" class="status">名刺を撮影・選択してください</div>
+    <div id="status" class="status">名刺を撮影してください</div>
     <input type="file" id="picker" accept="image/*">
     <img id="view" class="preview">
 
-    <label>会社名 (Company)</label>
-    <input type="text" id="comp">
+    <label>会社名 (Company Name)</label>
+    <input type="text" id="resComp">
     
-    <label>氏名 (Name / 漢字・英字対応)</label>
-    <input type="text" id="name">
+    <label>氏名 (Full Name)</label>
+    <input type="text" id="resName">
 
-    <label>住所 (Address / 郵便番号起点)</label>
-    <input type="text" id="addr">
+    <label>住所 (Full Address)</label>
+    <textarea id="resAddr" rows="2"></textarea>
 
-    <label>電話番号 (TEL)</label>
-    <input type="text" id="tel">
+    <label>連絡先 (Contact Details)</label>
+    <input type="text" id="resTel">
 
-    <button onclick="alert('保存しました')">保存する</button>
+    <button onclick="alert('保存しました')">データベースに登録</button>
 </div>
 
 <script>
@@ -51,52 +51,57 @@ picker.onchange = async (e) => {
     reader.onload = (re) => { document.getElementById('view').src = re.target.result; };
     reader.readAsDataURL(file);
 
-    status.innerText = "高精度スキャン実行中...";
+    status.innerText = "全域スキャン & 項目特定中...";
 
     const img = await createImageBitmap(file);
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    
-    // 日英両方のフォントに対応するため、極限まで鮮明化
-    const scale = 2.5;
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
+    const s = 2.0;
+    canvas.width = img.width * s; canvas.height = img.height * s;
     ctx.filter = 'grayscale(1) contrast(3) brightness(1.1)';
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
     const worker = await Tesseract.createWorker('jpn+eng');
-    
-    // 誤認識（ー ぺ）を防ぐため、認識モードを「行単位」に制限
-    await worker.setParameters({
-        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
-    });
-
     const { data } = await worker.recognize(canvas.toDataURL());
-    const lines = data.lines.map(l => ({
+    
+    // 行情報の整理
+    const lines = data.lines.map((l, index) => ({
         text: l.text.trim(),
         size: l.bbox.y1 - l.bbox.y0,
-        y: l.bbox.y0
+        y: l.bbox.y0,
+        index: index
     })).filter(l => l.text.length > 1);
 
-    // --- 日英ハイブリッド抽出ロジック ---
+    // --- 順番に依存しない項目特定ロジック ---
 
-    // 1. 会社名：上部40%以内にあり、特定のキーワードまたは4文字以上の英数字
-    const compLine = lines.find(l => (l.y < canvas.height * 0.4) && (l.text.length > 3 || /株|NIPPON|EXPRESS/i.test(l.text)));
-    document.getElementById('comp').value = compLine ? compLine.text : "";
+    // 1. 会社名：特定のキーワードを含む行を全域から探す
+    const compKeywords = /株|有限|NIPPON|EXPRESS|CO|LTD|通運|日本|物流/i;
+    const compLine = lines.find(l => compKeywords.test(l.text)) || lines[0];
 
-    // 2. 氏名：全体で最も文字サイズが大きい行（英字・漢字両対応）
-    // ルビ（極小文字）を避けるため、一定以上のサイズがあるものから選ぶ
-    const sortedLines = [...lines].sort((a, b) => b.size - a.size);
-    const nameLine = sortedLines[0];
-    document.getElementById('name').value = nameLine ? nameLine.text.replace(/\s+/g, ' ') : "";
+    // 2. 氏名：漢字または英字のみの行の中で、フォントサイズが最大のもの
+    // (会社名として特定された行は除外する)
+    const nameCandidates = lines.filter(l => l.text !== (compLine ? compLine.text : "") && l.size > 20);
+    const nameLine = nameCandidates.sort((a,b) => b.size - a.size)[0];
 
-    // 3. 住所：〒 または 3桁-4桁の数字を含む行
-    const addrLine = lines.find(l => /〒|[\d]{3}-[\d]{4}|県|市|JAPAN/i.test(l.text));
-    document.getElementById('addr').value = addrLine ? addrLine.text : "";
+    // 3. 住所：郵便番号(〒/000-0000)を見つけ、その行と「次の行」を合体させる
+    let fullAddr = "";
+    const addrIdx = lines.findIndex(l => /〒|[\d]{3}-[\d]{4}|県|市|JAPAN/i.test(l.text));
+    if (addrIdx !== -1) {
+        fullAddr = lines[addrIdx].text;
+        // 次の行があり、かつそれが電話番号やメールでなければ住所の続きとみなす
+        if (lines[addrIdx + 1] && !/TEL|FAX|MAIL|@|http/i.test(lines[addrIdx + 1].text)) {
+            fullAddr += " " + lines[addrIdx + 1].text;
+        }
+    }
 
-    // 4. 電話番号：数字とハイフンの塊
-    const telMatch = data.text.replace(/\s/g, '').match(/(0\d{1,4}-\d{1,4}-\d{4})/);
-    document.getElementById('tel').value = telMatch ? telMatch[0] : "";
+    // 4. 連絡先：全テキストから電話番号パターンを抽出
+    const telMatch = data.text.replace(/\s/g, '').match(/(0\d{1,4}-\d{1,4}-\d{4})|(\d{10,11})/);
+
+    // 画面反映
+    document.getElementById('resComp').value = compLine ? compLine.text : "";
+    document.getElementById('resName').value = nameLine ? nameLine.text.replace(/\s+/g, ' ') : "";
+    document.getElementById('resAddr').value = fullAddr.replace(/〒/g, '').trim();
+    document.getElementById('resTel').value = telMatch ? telMatch[0] : "";
 
     await worker.terminate();
     status.innerText = "解析完了";
