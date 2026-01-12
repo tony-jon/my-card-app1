@@ -2,98 +2,87 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>対策版：ルビ完全除去スキャナー</title>
+    <title>最終対策版：ルビ完全除去スキャナー</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #f4f7f6; padding: 20px; }
-        .card { max-width: 450px; margin: auto; background: #fff; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        .status { color: #1a73e8; font-weight: bold; text-align: center; margin-bottom: 20px; padding: 10px; background: #e8f0fe; border-radius: 8px; }
-        label { font-size: 12px; color: #666; display: block; margin-top: 15px; font-weight: bold; }
-        input, textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 5px; }
-        .preview { width: 100%; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
+        body { font-family: sans-serif; background: #f0f2f5; padding: 20px; }
+        .card { max-width: 480px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .status { background: #e7f3ff; color: #1877f2; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; margin-bottom: 20px; }
+        label { font-size: 11px; font-weight: bold; color: #65676b; display: block; margin-top: 15px; }
+        input { width: 100%; padding: 12px; border: 1px solid #dddfe2; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
+        .preview { width: 100%; border-radius: 8px; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <div id="status" class="status">名刺をスキャンして対策効果を確認</div>
-    <input type="file" id="fileInput" accept="image/*">
-    <img id="imgPreview" class="preview">
+    <div id="st" class="status">名刺を撮影してルビ除去をテスト</div>
+    <input type="file" id="up" accept="image/*">
+    <img id="pv" class="preview">
 
-    <label>会社名</label>
-    <input type="text" id="company">
-
-    <label>氏名 (ルビを除去して抽出)</label>
-    <input type="text" id="userName">
-
-    <label>住所 (郵便番号以降)</label>
-    <textarea id="address" rows="2"></textarea>
-
-    <label>電話番号</label>
-    <input type="text" id="phone">
+    <label>会社名 (Company)</label><input type="text" id="c">
+    <label>氏名 (Name / ルビを自動カット)</label><input type="text" id="n">
+    <label>住所 (Address)</label><input type="text" id="a">
+    <label>電話番号 (TEL)</label><input type="text" id="t">
 </div>
 
 <script>
-const fileInput = document.getElementById('fileInput');
-const status = document.getElementById('status');
+const up = document.getElementById('up');
+const st = document.getElementById('st');
 
-fileInput.onchange = async (e) => {
+up.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     // プレビュー表示
     const reader = new FileReader();
-    reader.onload = (event) => { document.getElementById('imgPreview').src = event.target.result; };
+    reader.onload = (re) => { document.getElementById('pv').src = re.target.result; };
     reader.readAsDataURL(file);
 
-    status.innerText = "ルビ・ノイズを計算で除去中...";
+    st.innerText = "ルビ（フリガナ）を計算で除外中...";
 
     const img = await createImageBitmap(file);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    // OCR精度を上げるための鮮明化
-    const scale = 2.0;
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
-    ctx.filter = 'grayscale(1) contrast(2.5) brightness(1.1)';
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const cv = document.createElement('canvas');
+    const ct = cv.getContext('2d');
+    const sc = 2.0;
+    cv.width = img.width * sc; cv.height = img.height * sc;
+    ct.filter = 'grayscale(1) contrast(3) brightness(1.1)';
+    ct.drawImage(img, 0, 0, cv.width, cv.height);
 
-    // Tesseract起動 (jpn+eng)
     const worker = await Tesseract.createWorker('jpn+eng');
-    const { data } = await worker.recognize(canvas.toDataURL());
+    const { data } = await worker.recognize(cv.toDataURL());
 
-    // --- 失敗を繰り返さないための新ロジック ---
+    // --- 失敗を元にした新ロジック ---
 
-    // 1. 行データのフィルタリング（高さが30px以下の行はルビ・注釈として破棄）
-    const validLines = data.lines.map(l => ({
-        text: l.text.trim().replace(/[|｜]/g, ''),
+    // 1. 全行を走査し、高さ(h)を計算。極端に小さい行（ルビ）は無視。
+    const lines = data.lines.map(l => ({
+        text: l.text.trim().replace(/[A-Z]{1,3}\s/g, ''), // 冒頭のBAなどのゴミを消去
         h: l.bbox.y1 - l.bbox.y0,
         y: l.bbox.y0
-    })).filter(l => l.h > 28); // ★ここがルビ除去のキモです
+    })).filter(l => l.h > 30); // ★ルビ（通常15-20px）を物理的に切り捨てる
 
-    // 2. 氏名の特定：残った行の中で最も高さがある漢字の行
-    const nameLine = validLines
-        .filter(l => /[\u4E00-\u9FFF]/.test(l.text) && l.text.length <= 8)
+    // 2. 会社名：キーワード優先
+    const compLine = lines.find(l => /日本通運|NIPPON|EXPRESS|株/i.test(l.text)) || lines[0];
+
+    // 3. 氏名：漢字を含み、かつ「最も文字サイズが大きい」行を特定
+    const nameLine = lines
+        .filter(l => /[\u4E00-\u9FFF]/.test(l.text) && l.text.length < 10)
         .sort((a, b) => b.h - a.h)[0];
 
-    // 3. 会社名の特定：NIPPON, EXPRESS, 通運 等のキーワード、または最上部
-    const companyLine = validLines.find(l => /NIPPON|EXPRESS|通運|株|CO/i.test(l.text)) || validLines[0];
-
-    // 4. 住所の特定：〒 を含む行
+    // 4. 住所：郵便番号 〒 以降を抽出
     const addrLine = data.lines.find(l => /〒|[\d]{3}-[\d]{4}/.test(l.text));
 
     // 5. 電話番号
     const telMatch = data.text.replace(/\s/g, '').match(/(0\d{1,4}-\d{1,4}-\d{4})/);
 
     // 反映
-    document.getElementById('company').value = companyLine ? companyLine.text : "";
-    document.getElementById('userName').value = nameLine ? nameLine.text.replace(/\s/g, '') : "";
-    document.getElementById('address').value = addrLine ? addrLine.text : "";
-    document.getElementById('phone').value = telMatch ? telMatch[0] : "";
+    document.getElementById('c').value = compLine ? compLine.text : "";
+    document.getElementById('n').value = nameLine ? nameLine.text.replace(/\s/g, '') : "";
+    document.getElementById('a').value = addrLine ? addrLine.text : "";
+    document.getElementById('t').value = telMatch ? telMatch[0] : "";
 
     await worker.terminate();
-    status.innerText = "解析完了";
+    st.innerText = "解析完了：ルビを除去しました";
 };
 </script>
 
