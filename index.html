@@ -1,112 +1,37 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>レイアウトフリー：AI名刺スキャナー</title>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <style>
-        :root { --main: #1a73e8; }
-        body { font-family: sans-serif; background: #f8f9fa; padding: 15px; margin: 0; }
-        .box { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .status { padding: 10px; background: #e8f0fe; color: #1967d2; text-align: center; font-weight: bold; border-radius: 8px; margin-bottom: 15px; }
-        .preview { width: 100%; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; }
-        label { font-size: 11px; font-weight: bold; color: #5f6368; display: block; margin-bottom: 5px; }
-        input, textarea { width: 100%; padding: 12px; border: 1px solid #dadce0; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-bottom: 12px; }
-        button { width: 100%; padding: 16px; background: var(--main); color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; }
-    </style>
-</head>
-<body>
+// OCR後のデータ解析部分（ここを差し替えてください）
+const { data } = await worker.recognize(cv.toDataURL());
+const lines = data.lines.map(l => ({
+    text: l.text.trim().replace(/[|｜・.．]/g, ''), // 記号ノイズを除去
+    size: l.bbox.y1 - l.bbox.y0,
+    y: l.bbox.y0
+})).filter(l => l.text.length > 1);
 
-<div class="box">
-    <div id="status" class="status">名刺を撮影してください</div>
-    <input type="file" id="picker" accept="image/*">
-    <img id="view" class="preview">
+// 1. 【会社名】特定キーワードを全域から探す
+const cKeywords = /株|通運|NIPPON|EXPRESS|CO|LTD|物流|支店|営業所/i;
+let company = lines.find(l => cKeywords.test(l.text)) || lines[0];
 
-    <label>会社名 (Company Name)</label>
-    <input type="text" id="resComp">
-    
-    <label>氏名 (Full Name)</label>
-    <input type="text" id="resName">
+// 2. 【氏名】会社名を除いた中で、最も「文字サイズ」が大きい行（2-10文字以内）
+const nameCandidate = lines
+    .filter(l => l.text !== company.text && l.text.length <= 10 && l.text.length >= 2)
+    .sort((a, b) => b.size - a.size)[0];
 
-    <label>住所 (Full Address)</label>
-    <textarea id="resAddr" rows="2"></textarea>
-
-    <label>連絡先 (Contact Details)</label>
-    <input type="text" id="resTel">
-
-    <button onclick="alert('保存しました')">データベースに登録</button>
-</div>
-
-<script>
-const picker = document.getElementById('picker');
-const status = document.getElementById('status');
-
-picker.onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // プレビュー表示
-    const reader = new FileReader();
-    reader.onload = (re) => { document.getElementById('view').src = re.target.result; };
-    reader.readAsDataURL(file);
-
-    status.innerText = "全域スキャン & 項目特定中...";
-
-    const img = await createImageBitmap(file);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const s = 2.0;
-    canvas.width = img.width * s; canvas.height = img.height * s;
-    ctx.filter = 'grayscale(1) contrast(3) brightness(1.1)';
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    const worker = await Tesseract.createWorker('jpn+eng');
-    const { data } = await worker.recognize(canvas.toDataURL());
-    
-    // 行情報の整理
-    const lines = data.lines.map((l, index) => ({
-        text: l.text.trim(),
-        size: l.bbox.y1 - l.bbox.y0,
-        y: l.bbox.y0,
-        index: index
-    })).filter(l => l.text.length > 1);
-
-    // --- 順番に依存しない項目特定ロジック ---
-
-    // 1. 会社名：特定のキーワードを含む行を全域から探す
-    const compKeywords = /株|有限|NIPPON|EXPRESS|CO|LTD|通運|日本|物流/i;
-    const compLine = lines.find(l => compKeywords.test(l.text)) || lines[0];
-
-    // 2. 氏名：漢字または英字のみの行の中で、フォントサイズが最大のもの
-    // (会社名として特定された行は除外する)
-    const nameCandidates = lines.filter(l => l.text !== (compLine ? compLine.text : "") && l.size > 20);
-    const nameLine = nameCandidates.sort((a,b) => b.size - a.size)[0];
-
-    // 3. 住所：郵便番号(〒/000-0000)を見つけ、その行と「次の行」を合体させる
-    let fullAddr = "";
-    const addrIdx = lines.findIndex(l => /〒|[\d]{3}-[\d]{4}|県|市|JAPAN/i.test(l.text));
-    if (addrIdx !== -1) {
-        fullAddr = lines[addrIdx].text;
-        // 次の行があり、かつそれが電話番号やメールでなければ住所の続きとみなす
-        if (lines[addrIdx + 1] && !/TEL|FAX|MAIL|@|http/i.test(lines[addrIdx + 1].text)) {
-            fullAddr += " " + lines[addrIdx + 1].text;
-        }
+// 3. 【住所】郵便番号起点で、次行まで繋ぐ
+let fullAddress = "";
+const addrIdx = lines.findIndex(l => /〒|[\d]{3}-[\d]{4}/.test(l.text));
+if (addrIdx !== -1) {
+    fullAddress = lines[addrIdx].text;
+    // 下の行が「連絡先」でなければ、住所の続きとして結合
+    const nextLine = lines[addrIdx + 1];
+    if (nextLine && !/TEL|FAX|M|0\d0|http|@/i.test(nextLine.text)) {
+        fullAddress += " " + nextLine.text;
     }
+}
 
-    // 4. 連絡先：全テキストから電話番号パターンを抽出
-    const telMatch = data.text.replace(/\s/g, '').match(/(0\d{1,4}-\d{1,4}-\d{4})|(\d{10,11})/);
+// 4. 【連絡先】
+const telMatch = data.text.replace(/\s/g, '').match(/(0\d{1,4}-\d{1,4}-\d{4})/);
 
-    // 画面反映
-    document.getElementById('resComp').value = compLine ? compLine.text : "";
-    document.getElementById('resName').value = nameLine ? nameLine.text.replace(/\s+/g, ' ') : "";
-    document.getElementById('resAddr').value = fullAddr.replace(/〒/g, '').trim();
-    document.getElementById('resTel').value = telMatch ? telMatch[0] : "";
-
-    await worker.terminate();
-    status.innerText = "解析完了";
-};
-</script>
-
-</body>
-</html>
+// 画面反映
+document.getElementById('c').value = company ? company.text : "";
+document.getElementById('n').value = nameCandidate ? nameCandidate.text : "";
+document.getElementById('a').value = fullAddress.replace(/〒/g, '').trim();
+document.getElementById('t').value = telMatch ? telMatch[0] : "";
