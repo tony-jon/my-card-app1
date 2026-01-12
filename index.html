@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>名刺管理</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
+  input, textarea, button { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; font-size: 16px; }
+  button { background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+  .card { background: white; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+  .card img { max-width: 100%; height: auto; display: block; margin-bottom: 10px; }
+  h2 { font-size: 1.2em; margin-top: 0; }
+</style>
+</head>
+<body>
+
+<h1>名刺登録</h1>
+<input type="text" id="name" placeholder="名前">
+<input type="text" id="company" placeholder="会社名">
+<input type="text" id="title" placeholder="役職">
+<input type="text" id="address" placeholder="住所">
+<input type="tel" id="phone" placeholder="連絡先">
+<p>名刺の写真:</p>
+<input type="file" id="photo" accept="image/*">
+<button onclick="saveCard()">保存する</button>
+
+<hr>
+
+<h1>名刺一覧</h1>
+<div id="cardList"></div>
+
+<script>
+  // ページを開いた時に保存されたデータを表示
+  document.addEventListener('DOMContentLoaded', loadCards);
+
+  function saveCard() {
+    const name = document.getElementById('name').value;
+    const company = document.getElementById('company').value;
+    const title = document.getElementById('title').value;
+    const address = document.getElementById('address').value;
+    const phone = document.getElementById('phone').value;
+    const photoInput = document.getElementById('photo');
+
+    if (!name) { alert("名前は必須です"); return; }
+
+    const reader = new FileReader();
+    
+    // 写真の処理（あってもなくてもOKにする）
+    const processData = (photoData) => {
+      const card = { name, company, title, address, phone, photo: photoData };
+      
+      // 既存のデータを取得して追加
+      let cards = JSON.parse(localStorage.getItem('meishiData')) || [];
+      cards.push(card);
+      localStorage.setItem('meishiData', JSON.stringify(cards));
+
+      alert("保存しました！");
+      location.reload(); // 画面更新
+    };
+
+    if (photoInput.files && photoInput.files[0]) {
+      reader.onload = function(e) { processData(e.target.result); };
+      reader.readAsDataURL(photoInput.files[0]);
+    } else {
+      processData(null);
+    }
+  }
+
+  function loadCards() {
+    const list = document.getElementById('cardList');
+    const cards = JSON.parse(localStorage.getItem('meishiData')) || [];
+
+    // 新しい順に表示
+    cards.slice().reverse().forEach((card, index) => {
+      const div = document.createElement('div');
+      div.className = 'card';
+      let html = `<h2>${card.name} 様</h2>`;
+      if (card.photo) { html += `<img src="${card.photo}">`; }
+      html += `<p><b>会社:</b> ${card.company}</p>`;
+      html += `<p><b>役職:</b> ${card.title}</p>`;
+      html += `<p><b>住所:</b> ${card.address}</p>`;
+      html += `<p><b>電話:</b> ${card.phone}</p>`;
+      html += `<button onclick="deleteCard(${cards.length - 1 - index})" style="background:#ff4444; margin-top:10px;">削除</button>`;
+      div.innerHTML = html;
+      list.appendChild(div);
+    });
+  }
+
+  function deleteCard(originalIndex) {
+    if(confirm("本当に削除しますか？")) {
+      let cards = JSON.parse(localStorage.getItem('meishiData')) || [];
+      cards.splice(originalIndex, 1);
+      localStorage.setItem('meishiData', JSON.stringify(cards));
+      location.reload();
+    }
+  }
+</script>
+
+</body>
+</html>
