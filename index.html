@@ -4,33 +4,47 @@ async function recognizeText() {
 
     const status = document.getElementById('ocrStatus');
     const rawTextArea = document.getElementById('rawText');
-    status.innerText = "AI解析中...（文字をくっきり読み取ります）";
+    status.innerText = "画像を最適化して解析中...";
+
+    // --- 画像の前処理 (Canvasを使用して白黒はっきりさせる) ---
+    const img = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    
+    // グレースケール変換とコントラスト調整
+    ctx.filter = 'grayscale(100%) contrast(150%) brightness(110%)';
+    ctx.drawImage(img, 0, 0);
+    
+    // 最適化された画像データ
+    const processedImageData = canvas.toDataURL('image/jpeg');
 
     try {
-        // Tesseractのワーカーを作成し、詳細設定を行う
-        const worker = await Tesseract.createWorker();
-        await worker.loadLanguage('jpn+eng');
-        await worker.initialize('jpn+eng');
-        
-        // 文字化けを防ぐために、認識する文字の候補をある程度絞る（オプション設定）
-        await worker.setParameters({
-            tessedit_char_whitelist: '0123456789-() 　abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ' +
-                                     '亜唖娃阿哀愛挨逢葵茜穐悪握渥旭葦芦葦宛案闇暗...（常用漢字など）', 
-            // ※実際には全ての漢字を書かなくても、jpnを指定していれば大丈夫ですが
-            // 記号を減らすだけでノイズが減ります。
+        // Tesseractの実行
+        const result = await Tesseract.recognize(processedImageData, 'jpn+eng', {
+            logger: m => console.log(m) // 進捗をコンソールに表示
         });
-
-        const { data: { text } } = await worker.recognize(file);
         
-        // 読み取った後のノイズ（変な記号）を少し掃除する
-        const cleanText = text.replace(/[^\w\sぁ-んァ-ヶ亜-熙\-\(\)\@\.\:]/g, '');
-
+        const text = result.data.text;
+        
+        // 変な記号を除去し、日本語・英語・数字・改行・一部の記号だけに絞る
+        const cleanText = text.replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF0-9a-zA-Z\s\-\.\:\@\(\)]/g, '');
+        
         rawTextArea.value = cleanText;
 
         const lines = cleanText.split('\n').map(l => l.trim()).filter(l => l.length > 1);
         
         if (lines.length > 0) {
-            // 文字数が多い行や、特定のキーワードを含む行を除外して名前を探す工夫
             document.getElementById('name').value = lines[0] || "";
             document.getElementById('company').value = lines[1] || "";
             
@@ -40,10 +54,9 @@ async function recognizeText() {
             }
         }
         
-        await worker.terminate(); // 使い終わったらワーカーを終了
         status.innerText = "読み取り完了！";
     } catch (e) {
         console.error(e);
-        status.innerText = "失敗しました。明るい場所で撮り直すか、直接入力してください。";
+        status.innerText = "解析失敗。明るい場所で撮影してください。";
     }
 }
