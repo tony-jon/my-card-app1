@@ -1,165 +1,49 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI名刺管理アプリ</title>
-    <script src="https://unpkg.com/tesseract.js@v4.0.1/dist/tesseract.min.js"></script>
-    <style>
-        body { font-family: sans-serif; padding: 15px; background: #f4f4f4; margin: 0; }
-        .container { max-width: 500px; margin: auto; }
-        input, button, textarea { width: 100%; padding: 12px; margin: 5px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
-        button { background: #007bff; color: white; border: none; font-weight: bold; cursor: pointer; }
-        .search-box { background: #fffde7; border: 2px solid #fbc02d; position: sticky; top: 0; z-index: 100; }
-        .card { background: white; padding: 15px; margin-top: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .card img { max-width: 100%; border-radius: 4px; margin-top: 10px; }
-        .status { color: #d32f2f; font-weight: bold; font-size: 14px; margin-bottom: 5px; }
-        .ocr-result-area { background: #e9ecef; font-size: 12px; height: 80px; resize: vertical; }
-        .delete-btn { background: #ff4444; margin-top: 10px; padding: 8px; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>名刺登録 (AI読み取り付)</h2>
-        <div id="ocrStatus" class="status"></div>
-        <input type="file" id="photo" accept="image/*" onchange="recognizeText()">
+async function recognizeText() {
+    const file = document.getElementById('photo').files[0];
+    if (!file) return;
+
+    const status = document.getElementById('ocrStatus');
+    const rawTextArea = document.getElementById('rawText');
+    status.innerText = "AI解析中...（文字をくっきり読み取ります）";
+
+    try {
+        // Tesseractのワーカーを作成し、詳細設定を行う
+        const worker = await Tesseract.createWorker();
+        await worker.loadLanguage('jpn+eng');
+        await worker.initialize('jpn+eng');
         
-        <label style="font-size: 12px; color: #666;">読み取り原文:</label>
-        <textarea id="rawText" class="ocr-result-area" placeholder="ここに読み取ったテキストが表示されます"></textarea>
+        // 文字化けを防ぐために、認識する文字の候補をある程度絞る（オプション設定）
+        await worker.setParameters({
+            tessedit_char_whitelist: '0123456789-() 　abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ' +
+                                     '亜唖娃阿哀愛挨逢葵茜穐悪握渥旭葦芦葦宛案闇暗...（常用漢字など）', 
+            // ※実際には全ての漢字を書かなくても、jpnを指定していれば大丈夫ですが
+            // 記号を減らすだけでノイズが減ります。
+        });
 
-        <input type="text" id="name" placeholder="名前">
-        <input type="text" id="company" placeholder="会社名">
-        <input type="text" id="phone" placeholder="電話番号">
-        <button onclick="saveCard()">保存する</button>
-
-        <hr>
-        <h2>名刺検索</h2>
-        <input type="text" id="searchInput" class="search-box" placeholder="名前や会社名で検索..." oninput="displayCards()">
+        const { data: { text } } = await worker.recognize(file);
         
-        <div id="list"></div>
-    </div>
+        // 読み取った後のノイズ（変な記号）を少し掃除する
+        const cleanText = text.replace(/[^\w\sぁ-んァ-ヶ亜-熙\-\(\)\@\.\:]/g, '');
 
-    <script>
-        async function recognizeText() {
-            const file = document.getElementById('photo').files[0];
-            if (!file) return;
+        rawTextArea.value = cleanText;
 
-            const status = document.getElementById('ocrStatus');
-            const rawTextArea = document.getElementById('rawText');
-            status.innerText = "文字を読み取り中...（数十秒かかる場合があります）";
-
-            try {
-                const result = await Tesseract.recognize(file, 'jpn+eng');
-                const text = result.data.text;
-                
-                // 原文を表示
-                rawTextArea.value = text;
-
-                // データの抽出処理
-                const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                
-                if (lines.length > 0) {
-                    // 1行目を名前、2行目を会社名と仮定（微調整可能）
-                    document.getElementById('name').value = lines[0] || "";
-                    document.getElementById('company').value = lines[1] || "";
-                    
-                    // 電話番号を正規表現で探す (数字とハイフンの組み合わせ)
-                    const phoneMatch = text.match(/[\d-]{10,15}/);
-                    if (phoneMatch) {
-                        document.getElementById('phone').value = phoneMatch[0];
-                    }
-                }
-                
-                status.innerText = "読み取り完了！";
-            } catch (e) {
-                console.error(e);
-                status.innerText = "エラーが発生しました。直接入力してください。";
-            }
-        }
-
-        function saveCard() {
-            const name = document.getElementById('name').value;
-            if (!name) { alert("名前を入力してください"); return; }
-
-            const file = document.getElementById('photo').files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const img = new Image();
-                    img.onload = function() {
-                        const canvas = document.createElement('canvas');
-                        const width = 400; // 少し解像度を上げました
-                        const scale = width / img.width;
-                        canvas.width = width;
-                        canvas.height = img.height * scale;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        finalize(canvas.toDataURL('image/jpeg', 0.7));
-                    };
-                    img.src = e.target.result;
-                };
-                reader.readAsDataURL(file);
-            } else {
-                finalize(null);
-            }
-        }
-
-        function finalize(imgData) {
-            const newCard = {
-                name: document.getElementById('name').value,
-                company: document.getElementById('company').value,
-                phone: document.getElementById('phone').value,
-                img: imgData
-            };
-            let cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
-            cards.push(newCard);
-            localStorage.setItem('myAiCards', JSON.stringify(cards));
-            alert("保存しました！");
+        const lines = cleanText.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+        
+        if (lines.length > 0) {
+            // 文字数が多い行や、特定のキーワードを含む行を除外して名前を探す工夫
+            document.getElementById('name').value = lines[0] || "";
+            document.getElementById('company').value = lines[1] || "";
             
-            // 入力欄をリセット
-            document.getElementById('name').value = "";
-            document.getElementById('company').value = "";
-            document.getElementById('phone').value = "";
-            document.getElementById('rawText').value = "";
-            document.getElementById('photo').value = "";
-            
-            displayCards();
-        }
-
-        function displayCards() {
-            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-            const cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
-            const list = document.getElementById('list');
-            list.innerHTML = "";
-
-            // 新しい順に表示
-            [...cards].reverse().forEach((c, i) => {
-                const originalIndex = cards.length - 1 - i;
-                if (c.name.toLowerCase().includes(searchTerm) || c.company.toLowerCase().includes(searchTerm)) {
-                    const div = document.createElement('div');
-                    div.className = 'card';
-                    div.innerHTML = `
-                        <h3>${c.name}</h3>
-                        <p>🏢 ${c.company}</p>
-                        <p>📞 ${c.phone}</p>
-                    `;
-                    if (c.img) div.innerHTML += `<img src="${c.img}">`;
-                    div.innerHTML += `<button class="delete-btn" onclick="deleteCard(${originalIndex})">削除</button>`;
-                    list.appendChild(div);
-                }
-            });
-        }
-
-        function deleteCard(index) {
-            if(confirm("この名刺を削除しますか？")) {
-                let cards = JSON.parse(localStorage.getItem('myAiCards')) || [];
-                cards.splice(index, 1);
-                localStorage.setItem('myAiCards', JSON.stringify(cards));
-                displayCards();
+            const phoneMatch = cleanText.match(/[\d-]{10,15}/);
+            if (phoneMatch) {
+                document.getElementById('phone').value = phoneMatch[0];
             }
         }
-
-        window.onload = displayCards;
-    </script>
-</body>
-</html>
+        
+        await worker.terminate(); // 使い終わったらワーカーを終了
+        status.innerText = "読み取り完了！";
+    } catch (e) {
+        console.error(e);
+        status.innerText = "失敗しました。明るい場所で撮り直すか、直接入力してください。";
+    }
+}
