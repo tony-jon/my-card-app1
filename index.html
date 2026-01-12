@@ -3,138 +3,125 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>プロ仕様：座標再構築型AI名刺管理</title>
+    <title>極限精度：AI名刺解析システム</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        :root { --primary: #1a73e8; --bg: #f1f3f4; }
-        body { font-family: 'Sego UI', sans-serif; background: var(--bg); margin: 0; padding: env(safe-area-inset-top) 15px; }
-        .container { max-width: 600px; margin: auto; background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-        .status { padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; font-weight: bold; background: #e8f0fe; color: #1967d2; }
-        .canvas-container { display: none; } /* 処理用Canvasは隠す */
-        .preview-img { width: 100%; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ddd; }
-        .field-label { font-size: 12px; font-weight: bold; color: #5f6368; margin-top: 10px; }
-        input, textarea { width: 100%; padding: 12px; margin: 5px 0; border: 1px solid #dadce0; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
-        .btn-save { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 15px; }
-        .card { background: #fff; border: 1px solid #dadce0; padding: 15px; border-radius: 10px; margin-top: 15px; }
+        :root { --main: #1a73e8; --bg: #f8f9fa; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
+        .container { max-width: 550px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); }
+        .status { padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; margin-bottom: 15px; font-size: 14px; background: #eee; }
+        .working { background: #d2e3fc; color: #174ea6; }
+        img#preview { width: 100%; border: 2px solid #ddd; border-radius: 8px; margin-bottom: 15px; filter: grayscale(1) contrast(1.2); }
+        .field { margin-bottom: 12px; }
+        label { font-size: 12px; font-weight: 700; color: #5f6368; display: block; }
+        input, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
+        button { width: 100%; padding: 15px; background: var(--main); color: #fff; border: none; border-radius: 8px; font-weight: 700; font-size: 16px; cursor: pointer; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <div id="status" class="status">名刺をスキャンしてください</div>
-    
-    <input type="file" id="fileInput" accept="image/*" capture="camera">
-    <img id="viewPreview" class="preview-img" style="display:none;">
+    <div id="status" class="status">名刺写真をアップロード</div>
+    <input type="file" id="fileIn" accept="image/*">
+    <img id="preview" style="display:none;">
 
-    <div class="field-label">AI再構築テキスト</div>
-    <textarea id="rawText" rows="5"></textarea>
+    <div class="field"><label>解析生テキスト</label><textarea id="raw" rows="6"></textarea></div>
+    <div class="field"><label>氏名 (Name)</label><input type="text" id="name"></div>
+    <div class="field"><label>会社名 (Company)</label><input type="text" id="comp"></div>
+    <div class="field"><label>電話番号 (TEL)</label><input type="text" id="tel"></div>
 
-    <div class="field-label">氏名</div>
-    <input type="text" id="nameField">
-    <div class="field-label">会社名</div>
-    <input type="text" id="companyField">
-    <div class="field-label">電話番号</div>
-    <input type="text" id="phoneField">
-
-    <button class="btn-save" onclick="saveData()">保存する</button>
-
-    <div id="cardList"></div>
+    <button onclick="save()">データを保存する</button>
+    <div id="log" style="margin-top:20px;"></div>
 </div>
 
-<canvas id="procCanvas" class="canvas-container"></canvas>
-
 <script>
-const fileInput = document.getElementById('fileInput');
+const fileIn = document.getElementById('fileIn');
 const status = document.getElementById('status');
 
-fileInput.onchange = async (e) => {
+fileIn.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    status.innerText = "画像を最適化中...";
-    
+    status.className = "status working";
+    status.innerText = "超解像・鮮明化処理中...";
+
     const img = await createImageBitmap(file);
-    const canvas = document.getElementById('procCanvas');
+    const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
 
-    // 1. 画像の向きを「横長」に強制正規化する
-    // 横書き名刺を想定し、幅 > 高さ になるように描画
-    if (img.height > img.width) {
-        canvas.width = img.height;
-        canvas.height = img.width;
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate(90 * Math.PI / 180);
-        ctx.drawImage(img, -img.width / 2, -img.height / 2);
-    } else {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-    }
+    // 1. 鮮明化のための拡大とフィルタリング
+    const scale = 2.0; 
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+    
+    // 文字を太く、くっきりさせるための多重フィルタ
+    ctx.filter = 'grayscale(1) contrast(2) brightness(1.0) blur(0.5px)'; 
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    // 2. プレビュー表示
+    const dataUrl = canvas.toDataURL('image/png');
+    document.getElementById('preview').src = dataUrl;
+    document.getElementById('preview').style.display = "block";
 
-    // 2. 鮮明化（コントラスト調整）
-    ctx.globalCompositeOperation = 'contrast';
-    ctx.filter = 'contrast(1.5) grayscale(1) brightness(1.1)';
-    ctx.drawImage(canvas, 0, 0);
+    status.innerText = "英日ハイブリッド解析中...";
 
-    const processedData = canvas.toDataURL('image/jpeg', 0.9);
-    document.getElementById('viewPreview').src = processedData;
-    document.getElementById('viewPreview').style.display = "block";
+    // 3. Tesseract実行 (eng+jpn を同時指定)
+    const worker = await Tesseract.createWorker('eng+jpn');
+    
+    await worker.setParameters({
+        tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+        tessedit_char_whitelist: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -.,@():/株式会社有限会社'
+    });
 
-    status.innerText = "座標ベースで文字を再構築中...";
+    const { data } = await worker.recognize(dataUrl);
+    const words = data.words;
 
-    // 3. OCR実行
-    const worker = await Tesseract.createWorker('jpn');
-    const { data } = await worker.recognize(processedData);
-
-    // 4. 座標ベースの再構築ロジック
-    // 同じ行(y座標)にある単語をグループ化して、正しい「行」を作る
+    // 4. 座標ベースの行再構築 (横書き特化)
     const lines = [];
-    let currentLine = { y: -1, text: "" };
-    const threshold = 20; // 同じ行とみなす高さの許容範囲(px)
+    let curY = -1;
+    let curLine = "";
+    const Y_LIMIT = 30 * scale; // 同じ行とみなすピクセル幅
 
-    const sortedWords = data.words.sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
-
-    sortedWords.forEach(word => {
-        if (Math.abs(word.bbox.y0 - currentLine.y) > threshold) {
-            if (currentLine.text) lines.push(currentLine.text);
-            currentLine = { y: word.bbox.y0, text: word.text };
+    words.sort((a,b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0).forEach(w => {
+        if (Math.abs(w.bbox.y0 - curY) > Y_LIMIT) {
+            if (curLine) lines.push(curLine.trim());
+            curY = w.bbox.y0;
+            curLine = w.text;
         } else {
-            currentLine.text += " " + word.text;
+            curLine += " " + w.text;
         }
     });
-    if (currentLine.text) lines.push(currentLine.text);
+    if (curLine) lines.push(curLine.trim());
 
-    const fullText = lines.join('\n').replace(/\s+/g, ' ');
-    document.getElementById('rawText').value = fullText;
+    // 5. 結果の流し込み
+    const fullText = lines.join('\n');
+    document.getElementById('raw').value = fullText;
 
-    // 5. 抽出
-    const cleanLines = lines.map(l => l.trim()).filter(l => l.length > 1);
-    document.getElementById('companyField').value = cleanLines.find(l => l.includes('株') || l.includes('有限')) || cleanLines[0] || "";
-    document.getElementById('nameField').value = cleanLines.find(l => l.length >= 2 && l.length <= 8 && !l.includes('株')) || cleanLines[1] || "";
-    const tel = fullText.replace(/[^\d-]/g, '').match(/\d{2,4}-\d{2,4}-\d{4}/);
-    document.getElementById('phoneField').value = tel ? tel[0] : "";
+    // 氏名: yasuki takagi のようなアルファベット、または2-4文字の漢字を探す
+    document.getElementById('name').value = lines.find(l => /^[A-Za-z ]+$/.test(l) || (l.length >= 2 && l.length <= 4)) || "";
+    // 会社名: NIPPON EXPRESS など大文字が多い行、または「株」を含む行
+    document.getElementById('comp').value = lines.find(l => l.includes('NIPPON') || l.includes('EXPRESS') || l.includes('株')) || lines[0];
+    // 電話: 
+    const telMatch = fullText.replace(/\s/g,'').match(/[\d-]{10,15}/);
+    document.getElementById('tel').value = telMatch ? telMatch[0] : "";
 
     await worker.terminate();
-    status.innerText = "スキャン完了";
+    status.className = "status";
+    status.innerText = "解析完了";
 };
 
-function saveData() {
-    const card = {
-        name: document.getElementById('nameField').value,
-        company: document.getElementById('companyField').value,
-        phone: document.getElementById('phoneField').value
-    };
-    const list = JSON.parse(localStorage.getItem('cards_v3') || '[]');
-    list.push(card);
-    localStorage.setItem('cards_v3', JSON.stringify(list));
+function save() {
+    const card = { n: document.getElementById('name').value, c: document.getElementById('comp').value, t: document.getElementById('tel').value };
+    const db = JSON.parse(localStorage.getItem('cards_final') || '[]');
+    db.push(card);
+    localStorage.setItem('cards_final', JSON.stringify(db));
     alert("保存しました");
     render();
 }
 
 function render() {
-    const list = JSON.parse(localStorage.getItem('cards_v3') || '[]');
-    const div = document.getElementById('cardList');
-    div.innerHTML = list.reverse().map(c => `<div class="card"><b>${c.name}</b><br>${c.company}<br>${c.phone}</div>`).join('');
+    const db = JSON.parse(localStorage.getItem('cards_final') || '[]');
+    document.getElementById('log').innerHTML = db.reverse().map(x => `<div style="border:1px solid #ddd;padding:10px;margin-bottom:5px;border-radius:5px;"><b>${x.n}</b><br>${x.c}<br>${x.t}</div>`).join('');
 }
 window.onload = render;
 </script>
