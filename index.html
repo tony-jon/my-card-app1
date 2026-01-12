@@ -3,145 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高精度名刺解析システム Pro</title>
+    <title>プロ仕様：座標再構築型AI名刺管理</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        :root { --accent: #2563eb; --bg: #f8fafc; }
-        body { font-family: 'Hiragino Sans', 'Meiryo', sans-serif; background: var(--bg); margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: auto; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-        .status-bar { padding: 15px; border-radius: 12px; margin-bottom: 20px; text-align: center; font-weight: bold; background: #f1f5f9; color: #475569; }
-        .status-active { background: #dbeafe; color: #1d4ed8; animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
-        .preview-box { width: 100%; height: 200px; border: 2px dashed #cbd5e1; border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 20px; }
-        .preview-box img { max-height: 100%; max-width: 100%; object-fit: contain; }
-        .input-group { margin-bottom: 15px; }
-        label { font-size: 0.8rem; font-weight: bold; color: #64748b; display: block; margin-bottom: 5px; }
-        input, textarea { width: 100%; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 1rem; box-sizing: border-box; }
-        .btn-save { width: 100%; padding: 16px; background: var(--accent); color: white; border: none; border-radius: 12px; font-size: 1.1rem; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        .card-list { margin-top: 30px; border-top: 2px solid #f1f5f9; padding-top: 20px; }
-        .card-item { background: #fff; border: 1px solid #e2e8f0; padding: 15px; border-radius: 12px; margin-bottom: 10px; }
+        :root { --primary: #1a73e8; --bg: #f1f3f4; }
+        body { font-family: 'Sego UI', sans-serif; background: var(--bg); margin: 0; padding: env(safe-area-inset-top) 15px; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+        .status { padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; font-weight: bold; background: #e8f0fe; color: #1967d2; }
+        .canvas-container { display: none; } /* 処理用Canvasは隠す */
+        .preview-img { width: 100%; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ddd; }
+        .field-label { font-size: 12px; font-weight: bold; color: #5f6368; margin-top: 10px; }
+        input, textarea { width: 100%; padding: 12px; margin: 5px 0; border: 1px solid #dadce0; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
+        .btn-save { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+        .card { background: #fff; border: 1px solid #dadce0; padding: 15px; border-radius: 10px; margin-top: 15px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <div id="statusBar" class="status-bar">名刺を撮影または選択してください</div>
+    <div id="status" class="status">名刺をスキャンしてください</div>
     
-    <div class="preview-box" id="previewBox">
-        <p id="previewText">画像プレビュー</p>
-    </div>
+    <input type="file" id="fileInput" accept="image/*" capture="camera">
+    <img id="viewPreview" class="preview-img" style="display:none;">
 
-    <input type="file" id="photoInput" accept="image/*" style="margin-bottom: 20px;">
+    <div class="field-label">AI再構築テキスト</div>
+    <textarea id="rawText" rows="5"></textarea>
 
-    <div class="input-group">
-        <label>AI解析テキスト（正規化済み）</label>
-        <textarea id="rawText" readonly></textarea>
-    </div>
+    <div class="field-label">氏名</div>
+    <input type="text" id="nameField">
+    <div class="field-label">会社名</div>
+    <input type="text" id="companyField">
+    <div class="field-label">電話番号</div>
+    <input type="text" id="phoneField">
 
-    <div class="input-group"><label>氏名</label><input type="text" id="nameField"></div>
-    <div class="input-group"><label>会社名</label><input type="text" id="companyField"></div>
-    <div class="input-group"><label>電話番号</label><input type="text" id="phoneField"></div>
+    <button class="btn-save" onclick="saveData()">保存する</button>
 
-    <button class="btn-save" onclick="saveToDB()">データベースに保存</button>
-
-    <div class="card-list" id="cardList"></div>
+    <div id="cardList"></div>
 </div>
 
-<script>
-const photoInput = document.getElementById('photoInput');
-const statusBar = document.getElementById('statusBar');
-const previewBox = document.getElementById('previewBox');
+<canvas id="procCanvas" class="canvas-container"></canvas>
 
-photoInput.onchange = async (e) => {
+<script>
+const fileInput = document.getElementById('fileInput');
+const status = document.getElementById('status');
+
+fileInput.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    statusBar.className = "status-bar status-active";
-    statusBar.innerText = "画像を鮮明化して解析中...";
+    status.innerText = "画像を最適化中...";
+    
+    const img = await createImageBitmap(file);
+    const canvas = document.getElementById('procCanvas');
+    const ctx = canvas.getContext('2d');
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-        const img = new Image();
-        img.onload = async () => {
-            // --- 画像の鮮明化処理 (Preprocessing) ---
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            // OCRに最適な解像度に調整
-            const scale = 1.5; 
-            canvas.width = img.width * scale;
-            canvas.height = img.height * scale;
+    // 1. 画像の向きを「横長」に強制正規化する
+    // 横書き名刺を想定し、幅 > 高さ になるように描画
+    if (img.height > img.width) {
+        canvas.width = img.height;
+        canvas.height = img.width;
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate(90 * Math.PI / 180);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    } else {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+    }
 
-            // 鮮明化フィルタ（グレースケール + 強力なコントラスト）
-            ctx.filter = 'contrast(1.4) brightness(1.1) grayscale(1)';
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    // 2. 鮮明化（コントラスト調整）
+    ctx.globalCompositeOperation = 'contrast';
+    ctx.filter = 'contrast(1.5) grayscale(1) brightness(1.1)';
+    ctx.drawImage(canvas, 0, 0);
 
-            // プレビュー表示
-            previewBox.innerHTML = `<img src="${canvas.toDataURL()}">`;
+    const processedData = canvas.toDataURL('image/jpeg', 0.9);
+    document.getElementById('viewPreview').src = processedData;
+    document.getElementById('viewPreview').style.display = "block";
 
-            // --- Tesseract解析 (書字方向の自動判定) ---
-            const worker = await Tesseract.createWorker('jpn+eng');
-            
-            // PSM.AUTO: 縦・横・ブロックを自動判断
-            await worker.setParameters({
-                tessedit_pageseg_mode: Tesseract.PSM.AUTO,
-            });
+    status.innerText = "座標ベースで文字を再構築中...";
 
-            const { data } = await worker.recognize(canvas.toDataURL());
-            
-            // 解析結果のクリーニング
-            const cleanText = data.text.replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF0-9a-zA-Z\s\-\(\)\.\@]/g, '');
-            document.getElementById('rawText').value = cleanText;
+    // 3. OCR実行
+    const worker = await Tesseract.createWorker('jpn');
+    const { data } = await worker.recognize(processedData);
 
-            // ロジックによる抽出
-            const lines = data.lines.map(l => l.text.trim()).filter(l => l.length > 1);
-            if (lines.length > 0) {
-                // 会社名（"株"を含む行、または最上部）
-                document.getElementById('companyField').value = lines.find(l => l.includes('株') || l.includes('有限')) || lines[0];
-                // 氏名（2文字〜6文字程度の独立した行を優先）
-                document.getElementById('nameField').value = lines.find(l => l.length >= 2 && l.length <= 8 && !l.includes('株')) || lines[1] || "";
-                // 電話番号
-                const phoneMatch = cleanText.replace(/\s/g, '').match(/(0\d{1,4}-\d{1,4}-\d{4})|(\d{10,11})/);
-                document.getElementById('phoneField').value = phoneMatch ? phoneMatch[0] : "";
-            }
+    // 4. 座標ベースの再構築ロジック
+    // 同じ行(y座標)にある単語をグループ化して、正しい「行」を作る
+    const lines = [];
+    let currentLine = { y: -1, text: "" };
+    const threshold = 20; // 同じ行とみなす高さの許容範囲(px)
 
-            await worker.terminate();
-            statusBar.className = "status-bar";
-            statusBar.innerText = "解析完了：情報を確認してください";
-        };
-        img.src = event.target.result;
-    };
-    reader.readAsDataURL(file);
+    const sortedWords = data.words.sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
+
+    sortedWords.forEach(word => {
+        if (Math.abs(word.bbox.y0 - currentLine.y) > threshold) {
+            if (currentLine.text) lines.push(currentLine.text);
+            currentLine = { y: word.bbox.y0, text: word.text };
+        } else {
+            currentLine.text += " " + word.text;
+        }
+    });
+    if (currentLine.text) lines.push(currentLine.text);
+
+    const fullText = lines.join('\n').replace(/\s+/g, ' ');
+    document.getElementById('rawText').value = fullText;
+
+    // 5. 抽出
+    const cleanLines = lines.map(l => l.trim()).filter(l => l.length > 1);
+    document.getElementById('companyField').value = cleanLines.find(l => l.includes('株') || l.includes('有限')) || cleanLines[0] || "";
+    document.getElementById('nameField').value = cleanLines.find(l => l.length >= 2 && l.length <= 8 && !l.includes('株')) || cleanLines[1] || "";
+    const tel = fullText.replace(/[^\d-]/g, '').match(/\d{2,4}-\d{2,4}-\d{4}/);
+    document.getElementById('phoneField').value = tel ? tel[0] : "";
+
+    await worker.terminate();
+    status.innerText = "スキャン完了";
 };
 
-function saveToDB() {
-    const name = document.getElementById('nameField').value;
-    if(!name) return alert("名前を入力してください");
-    
+function saveData() {
     const card = {
-        name,
+        name: document.getElementById('nameField').value,
         company: document.getElementById('companyField').value,
-        phone: document.getElementById('phoneField').value,
-        timestamp: new Date().getTime()
+        phone: document.getElementById('phoneField').value
     };
-    
-    const db = JSON.parse(localStorage.getItem('business_cards_final') || '[]');
-    db.push(card);
-    localStorage.setItem('business_cards_final', JSON.stringify(db));
-    
+    const list = JSON.parse(localStorage.getItem('cards_v3') || '[]');
+    list.push(card);
+    localStorage.setItem('cards_v3', JSON.stringify(list));
     alert("保存しました");
-    location.reload();
+    render();
 }
 
 function render() {
-    const db = JSON.parse(localStorage.getItem('business_cards_final') || '[]');
-    const list = document.getElementById('cardList');
-    db.reverse().forEach(c => {
-        const div = document.createElement('div');
-        div.className = 'card-item';
-        div.innerHTML = `<strong>${c.name}</strong><br><small>${c.company}</small><br><span>${c.phone}</span>`;
-        list.appendChild(div);
-    });
+    const list = JSON.parse(localStorage.getItem('cards_v3') || '[]');
+    const div = document.getElementById('cardList');
+    div.innerHTML = list.reverse().map(c => `<div class="card"><b>${c.name}</b><br>${c.company}<br>${c.phone}</div>`).join('');
 }
 window.onload = render;
 </script>
